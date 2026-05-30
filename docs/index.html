@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Code Explainer MCP — Documentation</title>
+		<style>
+			:root {
+				--bg: #ffffff;
+				--fg: #1f2328;
+				--muted: #57606a;
+				--accent: #0969da;
+				--border: #d0d7de;
+				--code-bg: #f6f8fa;
+				--max: 880px;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+				line-height: 1.6;
+				color: var(--fg);
+				background: var(--bg);
+			}
+			header {
+				border-bottom: 1px solid var(--border);
+				padding: 2.5rem 1.25rem 2rem;
+			}
+			header .inner,
+			main,
+			footer .inner {
+				max-width: var(--max);
+				margin: 0 auto;
+			}
+			header h1 {
+				margin: 0 0 0.25rem;
+				font-size: 2rem;
+			}
+			header p {
+				margin: 0;
+				color: var(--muted);
+			}
+			nav {
+				max-width: var(--max);
+				margin: 1.25rem auto 0;
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.5rem 1.25rem;
+				font-size: 0.95rem;
+			}
+			nav a {
+				color: var(--accent);
+				text-decoration: none;
+			}
+			nav a:hover {
+				text-decoration: underline;
+			}
+			main {
+				padding: 2rem 1.25rem 3rem;
+			}
+			section {
+				margin-bottom: 2.5rem;
+			}
+			section > h2 {
+				margin-top: 0;
+				padding-bottom: 0.3rem;
+				border-bottom: 1px solid var(--border);
+				font-size: 1.45rem;
+			}
+			h3 {
+				font-size: 1.15rem;
+				margin: 1.5rem 0 0.5rem;
+			}
+			a {
+				color: var(--accent);
+			}
+			code {
+				font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+				font-size: 0.9em;
+				background: var(--code-bg);
+				padding: 0.15em 0.35em;
+				border-radius: 4px;
+			}
+			pre {
+				background: var(--code-bg);
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				padding: 1rem;
+				overflow-x: auto;
+				line-height: 1.45;
+			}
+			pre code {
+				background: none;
+				padding: 0;
+				font-size: 0.85rem;
+			}
+			table {
+				border-collapse: collapse;
+				width: 100%;
+				margin: 1rem 0;
+				font-size: 0.95rem;
+			}
+			th,
+			td {
+				border: 1px solid var(--border);
+				padding: 0.5rem 0.75rem;
+				text-align: left;
+				vertical-align: top;
+			}
+			th {
+				background: var(--code-bg);
+			}
+			.note {
+				border-left: 4px solid var(--accent);
+				background: var(--code-bg);
+				padding: 0.75rem 1rem;
+				border-radius: 0 6px 6px 0;
+				margin: 1rem 0;
+			}
+			.note.warn {
+				border-left-color: #bf8700;
+			}
+			footer {
+				border-top: 1px solid var(--border);
+				padding: 1.5rem 1.25rem 2.5rem;
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<div class="inner">
+				<h1>Code Explainer MCP</h1>
+				<p>
+					A Cloudflare Worker that explains source code with an ASCII architecture diagram, a functionality summary, and a component
+					breakdown.
+				</p>
+			</div>
+			<nav>
+				<a href="#overview">Overview</a>
+				<a href="#architecture">Architecture</a>
+				<a href="#api">API reference</a>
+				<a href="#languages">Languages</a>
+				<a href="#development">Development</a>
+				<a href="#limitations">Limitations</a>
+			</nav>
+		</header>
+
+		<main>
+			<section id="overview">
+				<h2>Overview</h2>
+				<p>
+					Code Explainer MCP is a single-file Cloudflare Worker. Given a code snippet and its language, it returns a Markdown report
+					containing an ASCII architecture diagram, a summary of the code's core purpose, and a list of the main classes and functions with
+					short descriptions.
+				</p>
+				<p>
+					All analysis runs inside the Worker using regular expressions and pattern matching. There are
+					<strong>no LLM calls and no external runtime dependencies</strong> — the entire implementation lives in <code>src/index.ts</code>.
+				</p>
+				<div class="note warn">
+					<strong>About the name.</strong> The project is named for the Model Context Protocol and retains <code>workers-mcp</code> in its
+					deploy pipeline, but the current Worker does not use <code>workers-mcp</code> at runtime and does not speak the MCP JSON-RPC
+					protocol. It serves a plain HTTP JSON endpoint (see <a href="#api">API reference</a>). See
+					<a href="#limitations">Known limitations</a> for details.
+				</div>
+			</section>
+
+			<section id="architecture">
+				<h2>Architecture</h2>
+				<p>
+					The Worker's default <code>fetch</code> export is the only entry point. It authenticates the request, then either runs an analysis
+					(POST) or returns a static info page (GET/HEAD), answering any other method with <code>405</code>. The analysis is orchestrated by
+					<code>explainCode</code>, which calls four module-private helpers and assembles their output into Markdown.
+				</p>
+				<h3>Request flow</h3>
+				<pre><code>          HTTP request
+               │
+               ▼
+        ┌──────────────┐      GET
+        │    fetch()   │ ───────────────▶ HTML info page (200)
+        └──────────────┘
+               │ POST
+               ▼
+        Authorization: Bearer &lt;SHARED_SECRET&gt;
+               │
+        ┌──────┴───────┐
+     invalid          valid
+        │                │
+        ▼                ▼
+   401 Unauthorized   parse JSON body  ── invalid ──▶ 500 Error processing request
+                         │
+            method === "explainCode" && params.length >= 2
+                         │ no ──▶ 400 Invalid method or parameters
+                         │ yes
+                         ▼
+                   explainCode(code, language)
+                         │
+                         ▼
+                 { "result": "&lt;markdown&gt;" }  (200)</code></pre>
+
+				<h3>Analysis pipeline</h3>
+				<pre><code>explainCode(code, language)
+   │
+   ├─▶ generateArchitectureDiagram   → ASCII diagram (classes, functions, imports, relationships)
+   │       └─ extractBlock           → brace/indentation-matched declaration body
+   │
+   ├─▶ extractCoreFunctionality      → prose summary of primary/secondary purpose
+   │
+   ├─▶ extractComponents             → main classes + functions
+   │       ├─ extractBlock
+   │       └─ generateComponentDescription → per-component description
+   │
+   └─▶ assemble Markdown report</code></pre>
+
+				<h3>Helpers</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Function</th>
+							<th>Responsibility</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><code>explainCode</code></td>
+							<td>Orchestrates the helpers and assembles the final Markdown report.</td>
+						</tr>
+						<tr>
+							<td><code>generateArchitectureDiagram</code></td>
+							<td>
+								Extracts classes (with inheritance), top-level functions, and imports using language-specific regexes, infers
+								<code>inherits</code>/<code>calls</code> relationships, and renders an ASCII diagram.
+							</td>
+						</tr>
+						<tr>
+							<td><code>extractCoreFunctionality</code></td>
+							<td>
+								Counts matches across purpose categories (network, UI, data processing, authentication, database, testing, algorithm, file
+								system) and writes a prose summary of the primary and secondary purpose.
+							</td>
+						</tr>
+						<tr>
+							<td><code>extractComponents</code></td>
+							<td>Collects the main classes and functions (including JS/TS arrow functions) for the breakdown lists.</td>
+						</tr>
+						<tr>
+							<td><code>generateComponentDescription</code></td>
+							<td>
+								Returns a description for one component: an existing doc comment (JSDoc, Python docstring, or line comments) when present,
+								otherwise a description inferred from code patterns.
+							</td>
+						</tr>
+						<tr>
+							<td><code>extractBlock</code></td>
+							<td>
+								Returns a declaration's body: balanced <code>{ }</code> brace matching for brace-delimited languages, or indentation
+								analysis for Python.
+							</td>
+						</tr>
+					</tbody>
+				</table>
+
+				<h3>Report format</h3>
+				<p>A successful analysis returns Markdown with these sections:</p>
+				<pre><code># Code Analysis for &lt;language&gt; Code
+
+## Architecture Diagram
+```
+&lt;ASCII diagram&gt;
+```
+
+## Core Functionality
+&lt;prose summary&gt;
+
+## Main Classes:
+- &lt;name&gt;: &lt;description&gt;
+
+## Main Functions:
+- &lt;name&gt;: &lt;description&gt;</code></pre>
+			</section>
+
+			<section id="api">
+				<h2>API reference</h2>
+
+				<h3>POST — explain code</h3>
+				<p>Send a JSON body and the bearer token. <code>params[0]</code> is the source code; <code>params[1]</code> is the language.</p>
+				<pre><code>POST /
+Authorization: Bearer &lt;SHARED_SECRET&gt;
+Content-Type: application/json
+
+{
+	"method": "explainCode",
+	"params": ["function add(a, b) { return a + b; }", "javascript"]
+}</code></pre>
+				<p>Success returns <code>200</code> with <code>Content-Type: application/json</code>:</p>
+				<pre><code>{
+	"result": "# Code Analysis for javascript Code\n\n## Architecture Diagram\n..."
+}</code></pre>
+
+				<h3>GET — info page</h3>
+				<p>
+					A <code>GET</code> request returns a small HTML page (<code>200</code>, <code>text/html</code>) describing how to call the
+					endpoint.
+				</p>
+
+				<h3>Status codes</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Status</th>
+							<th>When</th>
+							<th>Body</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><code>200</code></td>
+							<td>Valid POST, or a <code>GET</code>/<code>HEAD</code></td>
+							<td><code>{ "result": "&lt;markdown&gt;" }</code>, or the HTML info page</td>
+						</tr>
+						<tr>
+							<td><code>401</code></td>
+							<td>POST with a missing or incorrect <code>Authorization</code> header</td>
+							<td><code>Unauthorized</code></td>
+						</tr>
+						<tr>
+							<td><code>503</code></td>
+							<td><code>SHARED_SECRET</code> is unset or still the placeholder (the Worker fails closed)</td>
+							<td><code>Service not configured: …</code></td>
+						</tr>
+						<tr>
+							<td><code>400</code></td>
+							<td>
+								<code>method</code> is not <code>explainCode</code>, fewer than two <code>params</code>, or non-string <code>params</code>
+							</td>
+							<td><code>Invalid method or parameters</code></td>
+						</tr>
+						<tr>
+							<td><code>413</code></td>
+							<td>The code (<code>params[0]</code>) exceeds the maximum length (100,000 characters)</td>
+							<td><code>Code exceeds the maximum length …</code></td>
+						</tr>
+						<tr>
+							<td><code>405</code></td>
+							<td>A request method other than <code>POST</code>, <code>GET</code>, or <code>HEAD</code></td>
+							<td><code>Method Not Allowed</code></td>
+						</tr>
+						<tr>
+							<td><code>500</code></td>
+							<td>Body is not valid JSON, or another error is thrown</td>
+							<td><code>Error processing request</code></td>
+						</tr>
+					</tbody>
+				</table>
+
+				<h3>Example — curl</h3>
+				<pre><code>curl -X POST https://your-worker-url.workers.dev \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SECRET_KEY_HERE" \
+  -d '{"method":"explainCode","params":["function add(a, b) { return a + b; }","javascript"]}'</code></pre>
+			</section>
+
+			<section id="languages">
+				<h2>Language support</h2>
+				<p>
+					Class, function, and import detection use patterns selected by the <code>language</code> argument (case-insensitive). Languages
+					outside this list fall back to generic patterns.
+				</p>
+				<table>
+					<thead>
+						<tr>
+							<th>Language argument</th>
+							<th>Detection notes</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><code>javascript</code>, <code>typescript</code>, <code>js</code>, <code>ts</code></td>
+							<td>
+								<code>class … extends …</code>, <code>function name</code>, ES <code>import</code>, and
+								<code>const x = (…) =&gt;</code> arrow functions.
+							</td>
+						</tr>
+						<tr>
+							<td><code>python</code></td>
+							<td><code>class Name(Base):</code>, <code>def name</code>, and <code>from … import</code> / <code>import …</code>.</td>
+						</tr>
+						<tr>
+							<td><code>java</code>, <code>c#</code>, <code>csharp</code></td>
+							<td><code>class … extends … implements …</code>, modifier-typed methods, and <code>import …;</code>.</td>
+						</tr>
+						<tr>
+							<td>any other value</td>
+							<td>Generic patterns for classes, functions/<code>def</code>/braced declarations, and import-like keywords.</td>
+						</tr>
+					</tbody>
+				</table>
+				<p>
+					Each language also contributes extra keyword patterns to the core-functionality classifier (for example React/axios for
+					JavaScript, Flask/Django for Python, JDBC for Java, Entity Framework for C#).
+				</p>
+			</section>
+
+			<section id="development">
+				<h2>Development &amp; deployment</h2>
+
+				<h3>Local development</h3>
+				<p>
+					Put a <strong>real</strong> secret in <code>.dev.vars</code> (gitignored) so <code>wrangler dev</code> injects it. The Worker
+					fails closed: with the <code>wrangler.jsonc</code> placeholder <code>YOUR_SECRET_KEY_HERE</code> (or no secret), every POST
+					returns <code>503</code>.
+				</p>
+				<pre><code># .dev.vars
+SHARED_SECRET=your-local-secret</code></pre>
+				<pre><code>npm install
+npm run dev        # wrangler dev on http://localhost:8787</code></pre>
+
+				<h3>Quality checks</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Task</th>
+							<th>Command</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Tests (Vitest, workers pool)</td>
+							<td><code>npm test</code></td>
+						</tr>
+						<tr>
+							<td>Lint</td>
+							<td><code>npm run lint</code> / <code>npm run lint:fix</code></td>
+						</tr>
+						<tr>
+							<td>Type-check (source)</td>
+							<td><code>npx tsc --noEmit</code></td>
+						</tr>
+						<tr>
+							<td>Type-check (tests)</td>
+							<td><code>npx tsc -p test/tsconfig.json --noEmit</code></td>
+						</tr>
+						<tr>
+							<td>Format</td>
+							<td><code>npx prettier --write .</code></td>
+						</tr>
+						<tr>
+							<td>Regenerate binding types</td>
+							<td><code>npm run cf-typegen</code></td>
+						</tr>
+					</tbody>
+				</table>
+				<p>
+					The root <code>tsconfig.json</code> excludes <code>test/</code>, so <code>npx tsc --noEmit</code> checks only the source;
+					type-check the tests with their own config as shown above.
+				</p>
+
+				<h3>Deploy</h3>
+				<pre><code>wrangler secret put SHARED_SECRET   # set the production secret once
+npm run deploy                      # workers-mcp docgen src/index.ts && wrangler deploy</code></pre>
+				<div class="note">
+					Store the secret with <code>wrangler secret put</code>; never commit a real value into <code>wrangler.jsonc</code>. The
+					placeholder there exists only so local <code>wrangler dev</code> has a value.
+				</div>
+			</section>
+
+			<section id="limitations">
+				<h2>Known limitations</h2>
+				<ul>
+					<li>
+						<strong>Heuristic, not parsed.</strong> Detection relies on regular expressions and substring checks rather than a real parser,
+						so unusual formatting, nested generics, or uncommon syntax can be missed or misattributed.
+					</li>
+					<li>
+						<strong>Block extraction is heuristic.</strong> <code>extractBlock</code> matches balanced <code>{ }</code> braces for
+						brace-delimited languages and uses indentation for Python. Other indentation-based languages handled by the generic fallback
+						still find no braces, so their component descriptions fall back to generic, pattern-derived text.
+					</li>
+					<li>
+						<strong>Substring call detection.</strong> Function-call relationships are inferred from <code>name(</code> appearing in another
+						function's body, which can over-report calls when names collide with other identifiers.
+					</li>
+					<li>
+						<strong>Single-shot output.</strong> The report ends with a follow-up question, but the endpoint is stateless and cannot hold a
+						conversation — each request is analyzed independently.
+					</li>
+					<li>
+						<strong>Auth comparison.</strong> The bearer token is checked by comparing SHA-256 digests in constant time, leaking neither the
+						secret's content nor its length through response timing. The Worker also fails closed, returning <code>503</code> until a real
+						<code>SHARED_SECRET</code> is configured. Add rate limiting in front of the Worker for higher-assurance deployments.
+					</li>
+					<li>
+						<strong>Input size cap.</strong> Code longer than 100,000 characters is rejected with <code>413</code> before analysis, bounding
+						worst-case regex work on adversarial input.
+					</li>
+					<li>
+						<strong><code>workers-mcp</code> is vestigial.</strong> It remains a dependency and <code>docgen</code> runs at deploy time, but
+						the Worker does not define a <code>WorkerEntrypoint</code> class or use the MCP protocol at runtime. The served behavior is
+						entirely the hand-written <code>fetch</code> handler.
+					</li>
+				</ul>
+			</section>
+		</main>
+
+		<footer>
+			<div class="inner">
+				<p>
+					Source: <code>src/index.ts</code> · Configuration: <code>wrangler.jsonc</code> · Tests: <code>test/index.spec.ts</code>. Licensed
+					under the Apache License 2.0.
+				</p>
+			</div>
+		</footer>
+	</body>
+</html>
