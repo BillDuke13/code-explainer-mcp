@@ -170,3 +170,7 @@ dist
 
 .dev.vars
 .wrangler/
+
+# Claude Code local (personal, untracked)
+CLAUDE.local.md
+.claude/settings.local.json
