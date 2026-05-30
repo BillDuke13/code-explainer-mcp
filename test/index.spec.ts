@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
-import { isSecretConfigured } from '../src/index';
+import worker, { isSecretConfigured } from '../src/index';
 
 const ENDPOINT = 'https://example.com/';
 
@@ -168,5 +168,15 @@ describe('isSecretConfigured (fail-closed guard)', () => {
 
 	it('accepts a real configured secret', () => {
 		expect(isSecretConfigured('a-real-secret')).toBe(true);
+	});
+
+	it('returns 503 from the handler when the secret is the placeholder', async () => {
+		const req = new Request(ENDPOINT, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: 'Bearer anything' },
+			body: JSON.stringify({ method: 'explainCode', params: ['x', 'javascript'] }),
+		});
+		const res = await worker.fetch(req, { SHARED_SECRET: 'YOUR_SECRET_KEY_HERE' });
+		expect(res.status).toBe(503);
 	});
 });

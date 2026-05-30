@@ -30,7 +30,7 @@ The project is named for the Model Context Protocol and keeps `workers-mcp` in i
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 18 or higher
+- [Node.js](https://nodejs.org/) 22 or higher
 - [Wrangler](https://developers.cloudflare.com/workers/wrangler/get-started/) (installed locally via `devDependencies`)
 - A Cloudflare account (for deployment)
 
