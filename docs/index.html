@@ -180,10 +180,13 @@
 				<pre><code>          HTTP request
                │
                ▼
-        ┌──────────────┐      GET
+        ┌──────────────┐   GET/HEAD
         │    fetch()   │ ───────────────▶ HTML info page (200)
         └──────────────┘
-               │ POST
+               │ POST                 (other methods ──▶ 405)
+               ▼
+        SHARED_SECRET configured?  ── no ──▶ 503 Service not configured
+               │ yes
                ▼
         Authorization: Bearer &lt;SHARED_SECRET&gt;
                │
