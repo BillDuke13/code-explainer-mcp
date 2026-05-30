@@ -328,6 +328,11 @@ Content-Type: application/json
 							<td><code>Unauthorized</code></td>
 						</tr>
 						<tr>
+							<td><code>503</code></td>
+							<td><code>SHARED_SECRET</code> is unset or still the placeholder (the Worker fails closed)</td>
+							<td><code>Service not configured: …</code></td>
+						</tr>
+						<tr>
 							<td><code>400</code></td>
 							<td>
 								<code>method</code> is not <code>explainCode</code>, fewer than two <code>params</code>, or non-string <code>params</code>
@@ -405,8 +410,9 @@ Content-Type: application/json
 
 				<h3>Local development</h3>
 				<p>
-					Put the local secret in <code>.dev.vars</code> (gitignored) so <code>wrangler dev</code> injects it; otherwise the
-					<code>wrangler.jsonc</code> placeholder <code>YOUR_SECRET_KEY_HERE</code> is used.
+					Put a <strong>real</strong> secret in <code>.dev.vars</code> (gitignored) so <code>wrangler dev</code> injects it. The Worker
+					fails closed: with the <code>wrangler.jsonc</code> placeholder <code>YOUR_SECRET_KEY_HERE</code> (or no secret), every POST
+					returns <code>503</code>.
 				</p>
 				<pre><code># .dev.vars
 SHARED_SECRET=your-local-secret</code></pre>
@@ -483,8 +489,9 @@ npm run deploy                      # workers-mcp docgen src/index.ts && wrangle
 						conversation — each request is analyzed independently.
 					</li>
 					<li>
-						<strong>Auth comparison.</strong> The bearer token is checked with a constant-time comparison, so the endpoint does not leak the
-						secret through response timing. Add rate limiting in front of the Worker for higher-assurance deployments.
+						<strong>Auth comparison.</strong> The bearer token is checked by comparing SHA-256 digests in constant time, leaking neither the
+						secret's content nor its length through response timing. The Worker also fails closed, returning <code>503</code> until a real
+						<code>SHARED_SECRET</code> is configured. Add rate limiting in front of the Worker for higher-assurance deployments.
 					</li>
 					<li>
 						<strong>Input size cap.</strong> Code longer than 100,000 characters is rejected with <code>413</code> before analysis, bounding

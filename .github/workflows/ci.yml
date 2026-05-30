@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck source
+        run: npx tsc --noEmit
+      - name: Typecheck tests
+        run: npx tsc -p test/tsconfig.json --noEmit
+      - name: Check formatting
+        run: npx prettier --check "src/**/*.ts" "test/**/*.ts" "*.md" "docs/**/*.html"
+      - name: Test
+        run: npm test

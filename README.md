@@ -55,7 +55,7 @@ The project is named for the Model Context Protocol and keeps `workers-mcp` in i
    wrangler secret put SHARED_SECRET
    ```
 
-   The `vars.SHARED_SECRET` entry in `wrangler.jsonc` is only the placeholder `"YOUR_SECRET_KEY_HERE"`; never commit a real secret there. For local development, put the secret in `.dev.vars` (gitignored) instead — see [Local development](#local-development).
+   The `vars.SHARED_SECRET` entry in `wrangler.jsonc` is only the placeholder `"YOUR_SECRET_KEY_HERE"`; never commit a real secret there. The Worker **fails closed** — while the secret is unset or still the placeholder, every POST returns `503`, so a real secret must be set before the endpoint will serve. For local development, put the secret in `.dev.vars` (gitignored) instead — see [Local development](#local-development).
 
 4. Deploy to Cloudflare Workers:
 
@@ -79,7 +79,7 @@ Send a `POST` request to your Worker URL with a JSON body:
 Include the bearer token in the `Authorization` header:
 
 ```
-Authorization: Bearer YOUR_SECRET_KEY_HERE
+Authorization: Bearer <SHARED_SECRET>
 ```
 
 A `GET` request to the same URL returns a small HTML info page instead of running an analysis.
@@ -100,6 +100,7 @@ On success the response is a JSON object whose `result` field holds the Markdown
 | ------ | ------------------------------------------------------------------------------ | ----------------------------------- |
 | `200`  | Valid POST, or a `GET`/`HEAD`                                                  | `{ "result": "<markdown>" }` / HTML |
 | `401`  | POST with a missing or incorrect `Authorization` header                        | `Unauthorized`                      |
+| `503`  | `SHARED_SECRET` is unset or still the placeholder (the Worker fails closed)    | `Service not configured: …`         |
 | `400`  | `method` is not `explainCode`, fewer than two `params`, or non-string `params` | `Invalid method or parameters`      |
 | `413`  | The code (`params[0]`) exceeds the maximum length (100,000 characters)         | `Code exceeds the maximum length …` |
 | `405`  | A request method other than `POST`, `GET`, or `HEAD`                           | `Method Not Allowed`                |
@@ -192,7 +193,7 @@ async function explainCode(code, language) {
    SHARED_SECRET=your-local-secret
    ```
 
-   If `.dev.vars` is absent, `wrangler dev` falls back to the `wrangler.jsonc` placeholder `YOUR_SECRET_KEY_HERE`.
+   The Worker fails closed, so `.dev.vars` must hold a real secret: with the `wrangler.jsonc` placeholder (or no secret at all), every POST returns `503`.
 
 3. Start the dev server (http://localhost:8787):
 
@@ -205,7 +206,7 @@ async function explainCode(code, language) {
    ```bash
    curl -X POST http://localhost:8787 \
      -H "Content-Type: application/json" \
-     -H "Authorization: Bearer YOUR_SECRET_KEY_HERE" \
+     -H "Authorization: Bearer your-local-secret" \
      -d '{"method":"explainCode","params":["function hello() { return \"Hello World\"; }","javascript"]}'
    ```
 
@@ -234,9 +235,10 @@ Detailed, browsable documentation lives in [`docs/index.html`](docs/index.html) 
 ## Security
 
 - The POST endpoint is protected by `Authorization: Bearer <SHARED_SECRET>`.
+- The Worker fails closed: it returns `503` until `SHARED_SECRET` is set to a real value (not the placeholder), so a misconfigured deploy refuses requests instead of accepting the public default.
 - Store the secret with `wrangler secret put SHARED_SECRET` for production and in `.dev.vars` for local development; never commit a real value to `wrangler.jsonc`.
-- The token is checked with a constant-time comparison, so the endpoint does not leak the secret through response timing. For higher-assurance deployments, add rate limiting in front of the Worker.
-- Request size is bounded: code longer than 100,000 characters is rejected with `413` before any analysis runs.
+- The token is checked by comparing SHA-256 digests in constant time, leaking neither the secret's content nor its length through response timing. For higher-assurance deployments, add rate limiting in front of the Worker.
+- Request size is bounded: oversized bodies are rejected with `413` (via `Content-Length`), and code longer than 100,000 characters is rejected before any analysis runs.
 
 ## License
 

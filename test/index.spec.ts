@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
+import { isSecretConfigured } from '../src/index';
 
 const ENDPOINT = 'https://example.com/';
 
@@ -24,6 +25,12 @@ describe('GET info page', () => {
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Content-Type')).toContain('text/html');
 		expect(await res.text()).toContain('Code Explainer MCP');
+	});
+
+	it('serves the info page for HEAD requests', async () => {
+		const res = await SELF.fetch(ENDPOINT, { method: 'HEAD' });
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toContain('text/html');
 	});
 });
 
@@ -93,6 +100,13 @@ describe('explainCode contract', () => {
 		const { result } = (await res.json()) as { result: string };
 		expect(result).toContain('Compute the doubled value');
 	});
+
+	it('lists JavaScript arrow functions as components', async () => {
+		const res = await explain('const multiply = (a, b) => a * b;', 'javascript');
+		const { result } = (await res.json()) as { result: string };
+		const mainFunctions = result.split('## Main Functions:')[1] ?? '';
+		expect(mainFunctions).toContain('multiply');
+	});
 });
 
 describe('request validation', () => {
@@ -142,5 +156,17 @@ describe('request validation', () => {
 		const res = await SELF.fetch(ENDPOINT, { method: 'DELETE' });
 		expect(res.status).toBe(405);
 		expect(res.headers.get('Allow')).toContain('POST');
+	});
+});
+
+describe('isSecretConfigured (fail-closed guard)', () => {
+	it('treats unset, empty, or placeholder secrets as not configured', () => {
+		expect(isSecretConfigured(undefined)).toBe(false);
+		expect(isSecretConfigured('')).toBe(false);
+		expect(isSecretConfigured('YOUR_SECRET_KEY_HERE')).toBe(false);
+	});
+
+	it('accepts a real configured secret', () => {
+		expect(isSecretConfigured('a-real-secret')).toBe(true);
 	});
 });

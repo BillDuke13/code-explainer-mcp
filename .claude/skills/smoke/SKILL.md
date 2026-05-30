@@ -9,19 +9,23 @@ Verify the Worker handles a real `explainCode` request end to end against the lo
 
 ## Steps
 
-1. **Resolve the secret** (never print it). If `.dev.vars` exists, load it so `$SHARED_SECRET` is set:
+1. **Resolve the secret** (never print it). Load `.dev.vars` so `$SHARED_SECRET` is set:
 
    ```bash
    set -a; [ -f ./.dev.vars ] && . ./.dev.vars; set +a
-   : "${SHARED_SECRET:=YOUR_SECRET_KEY_HERE}"
    ```
 
-   The fallback matches the `wrangler.jsonc` placeholder, which `wrangler dev` uses locally.
-
-2. **Start the dev server** if it isn't already listening on port 8787. Launch `npm run dev` in the background, then poll until the port answers (give it up to ~30s):
+   The Worker fails closed: if `SHARED_SECRET` is unset or still the `YOUR_SECRET_KEY_HERE` placeholder, every request returns `503`. Stop and tell the user to put a real secret in `.dev.vars` before smoke-testing:
 
    ```bash
-   until curl -sf -o /dev/null http://localhost:8787; do sleep 1; done
+   case "${SHARED_SECRET:-}" in '' | YOUR_SECRET_KEY_HERE) echo 'Set a real SHARED_SECRET in .dev.vars first'; exit 1 ;; esac
+   ```
+
+2. **Start the dev server** if it isn't already listening on port 8787. Launch `npm run dev` in the background, then poll until the port answers (bounded to ~30s; fail if it never comes up):
+
+   ```bash
+   for _ in $(seq 1 30); do curl -sf -o /dev/null http://localhost:8787 && break; sleep 1; done
+   curl -sf -o /dev/null http://localhost:8787 || { echo 'dev server did not start within 30s'; exit 1; }
    ```
 
 3. **Send a sample request** (use the snippet/language from CLAUDE.local.md if set):

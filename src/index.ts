@@ -823,23 +823,42 @@ function generateComponentDescription(componentCode: string, type: string): stri
 
 const MAX_CODE_LENGTH = 100_000;
 
+// Reject obviously oversized request bodies before reading and parsing them.
+const MAX_BODY_BYTES = 1_000_000;
+
+// The committed placeholder from wrangler.jsonc. It must never authenticate a real request.
+const PLACEHOLDER_SECRET = 'YOUR_SECRET_KEY_HERE';
+
 /**
- * Constant-time comparison of two strings to avoid leaking the shared secret through timing.
+ * Reports whether a usable shared secret is configured. An unset, empty, or placeholder secret is
+ * treated as "not configured" so the Worker fails closed instead of accepting the public default.
+ *
+ * @param secret {string | undefined} The configured SHARED_SECRET
+ * @return {boolean} True when the secret is safe to authenticate against
+ */
+export function isSecretConfigured(secret: string | undefined): boolean {
+	return typeof secret === 'string' && secret.length > 0 && secret !== PLACEHOLDER_SECRET;
+}
+
+/**
+ * Constant-time comparison of two secrets. Both sides are SHA-256 hashed first, so the comparison
+ * runs over equal-length digests and leaks neither the secret's content nor its length.
  *
  * @param a {string} First string
  * @param b {string} Second string
- * @return {boolean} True when the two strings are equal
+ * @return {Promise<boolean>} True when the two strings are equal
  */
-function timingSafeEqual(a: string, b: string): boolean {
+async function secretsMatch(a: string, b: string): Promise<boolean> {
 	const encoder = new TextEncoder();
-	const aBytes = encoder.encode(a);
-	const bBytes = encoder.encode(b);
-	if (aBytes.length !== bBytes.length) {
-		return false;
-	}
+	const [digestA, digestB] = await Promise.all([
+		crypto.subtle.digest('SHA-256', encoder.encode(a)),
+		crypto.subtle.digest('SHA-256', encoder.encode(b)),
+	]);
+	const bytesA = new Uint8Array(digestA);
+	const bytesB = new Uint8Array(digestB);
 	let mismatch = 0;
-	for (let i = 0; i < aBytes.length; i++) {
-		mismatch |= aBytes[i] ^ bBytes[i];
+	for (let i = 0; i < bytesA.length; i++) {
+		mismatch |= bytesA[i] ^ bytesB[i];
 	}
 	return mismatch === 0;
 }
@@ -849,12 +868,23 @@ export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		// Check if this is a POST request
 		if (request.method === 'POST') {
-			// Check for authentication
+			// Fail closed: refuse to serve until a real secret is configured (not the placeholder).
+			if (!isSecretConfigured(env.SHARED_SECRET)) {
+				return new Response('Service not configured: set a real SHARED_SECRET', { status: 503 });
+			}
+
+			// Authenticate with a constant-time comparison of the bearer token.
 			const authHeader = request.headers.get('Authorization');
 			const expectedAuth = `Bearer ${env.SHARED_SECRET}`;
 
-			if (!authHeader || !timingSafeEqual(authHeader, expectedAuth)) {
+			if (!authHeader || !(await secretsMatch(authHeader, expectedAuth))) {
 				return new Response('Unauthorized', { status: 401 });
+			}
+
+			// Reject oversized bodies up front using the declared Content-Length, when present.
+			const declaredLength = Number(request.headers.get('Content-Length'));
+			if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+				return new Response('Payload too large', { status: 413 });
 			}
 
 			// Parse the request body
